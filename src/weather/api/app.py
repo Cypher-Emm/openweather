@@ -20,7 +20,6 @@ app = FastAPI(
 
 @lru_cache(maxsize=1)
 def service() -> WeatherService:
-    # Three independent global model families. The fusion layer never asks an LLM to choose weather values.
     models = ("ecmwf_ifs", "ncep_gfs_seamless", "icon_seamless")
     return WeatherService([OpenMeteoSource(model=model) for model in models])
 
@@ -50,7 +49,6 @@ async def current(
 
 @app.get("/v1/weather/forecast")
 async def forecast(location: str):
-    from weather.geography import get_location
     try:
         return await service().by_name(location)
     except KeyError as exc:
