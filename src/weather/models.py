@@ -49,6 +49,7 @@ class HourlyPoint(BaseModel):
     wind_gust_kmh: float | None = Field(default=None, ge=0)
     wind_direction_deg: float | None = Field(default=None, ge=0, le=360)
     pressure_hpa: float | None = None
+    weather_code: int | None = None
 
 
 class DailyPoint(BaseModel):
