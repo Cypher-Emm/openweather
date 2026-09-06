@@ -5,22 +5,23 @@ from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
 
-from weather.geography import DISTRICTS, HILL_STATIONS, LOCATIONS, get_location
+from weather.geography import DISTRICTS, HILL_STATIONS, LOCATIONS
 from weather.models import DistrictSummary, Location, ValleyOverview
 from weather.service import WeatherService
-from weather.sources.open_meteo import OpenMeteoSource
+from weather.sources.met_no import MetNoSource
 
 app = FastAPI(
     title="OpenWeather — Kashmir Valley Weather Engine",
-    version="0.2.0",
-    description="Deterministic multi-model weather engine for Kashmir Valley locations.",
+    version="0.3.0",
+    description="Deterministic weather engine for Kashmir Valley locations with a global MET Norway fallback provider.",
 )
 
 
 @lru_cache(maxsize=1)
 def service() -> WeatherService:
-    models = ("ecmwf_ifs", "ncep_gfs_seamless", "icon_seamless")
-    return WeatherService([OpenMeteoSource(model=model) for model in models])
+    # MET Norway provides global Locationforecast coverage and avoids the
+    # Open-Meteo IP throttling that was making the production engine return 500s.
+    return WeatherService([MetNoSource()])
 
 
 @app.get("/v1/health")
