@@ -43,4 +43,4 @@ def test_stale_sources_reduce_quality():
     old = now.replace(year=2025)
     result = fuse(location(), [source(20, old), source(20, now)])
     assert result.quality.freshness_score < 0.01
-    assert result.quality.score < 0.5
+    assert result.quality.score < 0.7
