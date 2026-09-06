@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -26,8 +25,13 @@ def service() -> WeatherService:
 
 @app.get("/v1/health")
 def health() -> dict:
-    return {"status": "ok", "engine": "openweather", "mode": "deterministic",
-            "sources": len(service().sources), "cache": service().cache_stats()}
+    return {
+        "status": "ok",
+        "engine": "openweather",
+        "mode": "deterministic",
+        "sources": len(service().sources),
+        "cache": service().cache_stats(),
+    }
 
 
 @app.get("/v1/locations")
@@ -44,10 +48,20 @@ def location(location_id: str):
 
 
 @app.get("/v1/weather/current")
-async def current(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180),
-                  elevation_m: float = Query(0, ge=-500, le=10000), refresh: bool = Query(False)):
-    location = Location(id=f"coord_{lat}_{lon}", name="Coordinate", kind="town",
-                        latitude=lat, longitude=lon, elevation_m=elevation_m)
+async def current(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    elevation_m: float | None = Query(None, ge=-500, le=10000),
+    refresh: bool = Query(False),
+):
+    location = Location(
+        id=f"coord_{lat}_{lon}",
+        name="Coordinate",
+        kind="town",
+        latitude=lat,
+        longitude=lon,
+        elevation_m=elevation_m if elevation_m is not None else 0,
+    )
     return await service().get(location, force_refresh=refresh)
 
 
@@ -59,14 +73,19 @@ async def forecast(location: str, refresh: bool = Query(False)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-async def _many(locations: tuple[Location, ...]):
-    return await service().get_many(locations)
-
-
 @app.get("/v1/valley/overview", response_model=ValleyOverview)
 async def valley_overview():
-    district_results, hill_results = await asyncio.gather(_many(DISTRICTS), _many(HILL_STATIONS))
-    districts = [DistrictSummary(district=location.name, representative_location=location.id, weather=result)
-                 for location, result in zip(DISTRICTS, district_results)]
-    return ValleyOverview(generated_at=datetime.now(timezone.utc), districts=districts,
-                          hill_stations=list(hill_results))
+    all_locations = tuple(DISTRICTS) + tuple(HILL_STATIONS)
+    results = await service().get_many(all_locations)
+    district_count = len(DISTRICTS)
+    district_results = results[:district_count]
+    hill_results = results[district_count:]
+    districts = [
+        DistrictSummary(district=location.name, representative_location=location.id, weather=result)
+        for location, result in zip(DISTRICTS, district_results)
+    ]
+    return ValleyOverview(
+        generated_at=datetime.now(timezone.utc),
+        districts=districts,
+        hill_stations=list(hill_results),
+    )
