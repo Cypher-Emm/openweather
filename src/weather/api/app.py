@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
 
-from weather.geography import DISTRICTS, HILL_STATIONS, LOCATIONS, get_location
-from weather.models import ValleyOverview
+from weather.geography import DISTRICTS, HILL_STATIONS, LOCATIONS
+from weather.models import DistrictSummary, Location, ValleyOverview
 from weather.service import WeatherService
 from weather.sources.open_meteo import OpenMeteoSource
 
@@ -19,7 +20,9 @@ app = FastAPI(
 
 @lru_cache(maxsize=1)
 def service() -> WeatherService:
-    return WeatherService([OpenMeteoSource()])
+    # Three independent global model families. The fusion layer never asks an LLM to choose weather values.
+    models = ("ecmwf_ifs", "ncep_gfs_seamless", "icon_seamless")
+    return WeatherService([OpenMeteoSource(model=model) for model in models])
 
 
 @app.get("/v1/health")
@@ -36,21 +39,18 @@ def locations():
 async def current(
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
+    elevation_m: float = Query(0, ge=-500, le=10000),
 ):
-    from weather.models import Location
     location = Location(
-        id=f"coord_{lat}_{lon}",
-        name="Coordinate",
-        kind="town",
-        latitude=lat,
-        longitude=lon,
-        elevation_m=0,
+        id=f"coord_{lat}_{lon}", name="Coordinate", kind="town",
+        latitude=lat, longitude=lon, elevation_m=elevation_m,
     )
     return await service().get(location)
 
 
 @app.get("/v1/weather/forecast")
 async def forecast(location: str):
+    from weather.geography import get_location
     try:
         return await service().by_name(location)
     except KeyError as exc:
@@ -61,18 +61,10 @@ async def forecast(location: str):
 async def valley_overview():
     district_results = await asyncio.gather(*(service().get(x) for x in DISTRICTS))
     hill_results = await asyncio.gather(*(service().get(x) for x in HILL_STATIONS))
-    from weather.models import DistrictSummary
     districts = [
-        DistrictSummary(
-            district=location.name,
-            representative_location=location.id,
-            weather=result,
-        )
+        DistrictSummary(district=location.name, representative_location=location.id, weather=result)
         for location, result in zip(DISTRICTS, district_results)
     ]
-    from datetime import datetime, timezone
     return ValleyOverview(
-        generated_at=datetime.now(timezone.utc),
-        districts=districts,
-        hill_stations=list(hill_results),
+        generated_at=datetime.now(timezone.utc), districts=districts, hill_stations=list(hill_results)
     )
