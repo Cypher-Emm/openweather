@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 
 from weather.fusion import fuse
@@ -10,20 +11,47 @@ from weather.sources.base import WeatherSource
 
 
 class WeatherService:
-    def __init__(self, sources: list[WeatherSource]) -> None:
+    """Provider orchestration with bounded concurrency and a short in-memory cache."""
+
+    def __init__(self, sources: list[WeatherSource], cache_ttl_seconds: int = 300, max_concurrency: int = 12) -> None:
         self.sources = sources
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._cache: dict[str, tuple[float, WeatherResult]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
-    async def get(self, location: Location) -> WeatherResult:
-        now = datetime.now(timezone.utc)
-        results = await asyncio.gather(
-            *(source.forecast(location, now) for source in self.sources),
-            return_exceptions=True,
-        )
-        usable = [result for result in results if not isinstance(result, Exception)]
-        if not usable:
-            errors = "; ".join(str(result) for result in results if isinstance(result, Exception))
-            raise RuntimeError(f"All weather sources failed: {errors}")
-        return fuse(location, usable)
+    def _key(self, location: Location) -> str:
+        return f"{location.latitude:.5f}:{location.longitude:.5f}:{location.elevation_m:.0f}"
 
-    async def by_name(self, name: str) -> WeatherResult:
-        return await self.get(get_location(name))
+    async def get(self, location: Location, force_refresh: bool = False) -> WeatherResult:
+        key = self._key(location)
+        now_mono = time.monotonic()
+        cached = self._cache.get(key)
+        if not force_refresh and cached and now_mono - cached[0] < self.cache_ttl_seconds:
+            return cached[1]
+
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            now_mono = time.monotonic()
+            cached = self._cache.get(key)
+            if not force_refresh and cached and now_mono - cached[0] < self.cache_ttl_seconds:
+                return cached[1]
+            async with self._semaphore:
+                now = datetime.now(timezone.utc)
+                results = await asyncio.gather(
+                    *(source.forecast(location, now) for source in self.sources),
+                    return_exceptions=True,
+                )
+            usable = [result for result in results if not isinstance(result, Exception)]
+            if not usable:
+                errors = "; ".join(str(result) for result in results if isinstance(result, Exception))
+                raise RuntimeError(f"All weather sources failed: {errors}")
+            result = fuse(location, usable)
+            self._cache[key] = (time.monotonic(), result)
+            return result
+
+    async def by_name(self, name: str, force_refresh: bool = False) -> WeatherResult:
+        return await self.get(get_location(name), force_refresh=force_refresh)
+
+    def cache_stats(self) -> dict[str, int]:
+        return {"entries": len(self._cache), "ttl_seconds": self.cache_ttl_seconds}
