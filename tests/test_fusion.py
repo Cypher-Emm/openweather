@@ -5,12 +5,12 @@ from weather.models import CurrentWeather, HourlyPoint, Location, SourceMeta
 from weather.sources.base import SourceForecast
 
 
-def source(temp: float, retrieved_at: datetime, wind: float | None = None, direction: float | None = None) -> SourceForecast:
+def source(temp: float, retrieved_at: datetime, wind: float | None = None, direction: float | None = None, weather_code: int | None = None) -> SourceForecast:
     return SourceForecast(
         current=CurrentWeather(temperature_c=temp, relative_humidity_pct=50,
-                               wind_speed_kmh=wind, wind_direction_deg=direction),
+                               wind_speed_kmh=wind, wind_direction_deg=direction, weather_code=weather_code),
         hourly=[HourlyPoint(time=datetime(2026, 9, 6, 12), temperature_c=temp,
-                            wind_direction_deg=direction)],
+                            wind_direction_deg=direction, weather_code=weather_code)],
         daily=[],
         meta=SourceMeta(provider="test", model="test", retrieved_at=retrieved_at),
     )
@@ -36,6 +36,13 @@ def test_wind_direction_uses_circular_mean():
     assert result.current is not None
     assert result.current.wind_direction_deg is not None
     assert result.current.wind_direction_deg < 2 or result.current.wind_direction_deg > 358
+
+
+def test_precipitation_probability_falls_back_to_weather_codes():
+    now = datetime.now(timezone.utc)
+    result = fuse(location(), [source(10, now, weather_code=61), source(10, now, weather_code=0)])
+    assert result.current is not None
+    assert result.current.precipitation_probability_pct == 50
 
 
 def test_stale_sources_reduce_quality():
