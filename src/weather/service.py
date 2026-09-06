@@ -11,9 +11,9 @@ from weather.sources.base import WeatherSource
 
 
 class WeatherService:
-    """Provider orchestration with bounded concurrency and a short in-memory cache."""
+    """Provider orchestration with serialized upstream access and a short in-memory cache."""
 
-    def __init__(self, sources: list[WeatherSource], cache_ttl_seconds: int = 300, max_concurrency: int = 2) -> None:
+    def __init__(self, sources: list[WeatherSource], cache_ttl_seconds: int = 300, max_concurrency: int = 1) -> None:
         self.sources = sources
         self.cache_ttl_seconds = cache_ttl_seconds
         self._semaphore = asyncio.Semaphore(max_concurrency)
@@ -38,29 +38,31 @@ class WeatherService:
                 return cached[1]
             async with self._semaphore:
                 now = datetime.now(timezone.utc)
-                results = await asyncio.gather(
-                    *(source.forecast(location, now) for source in self.sources),
-                    return_exceptions=True,
-                )
-            usable = [result for result in results if not isinstance(result, Exception)]
-            if not usable:
-                errors = "; ".join(str(result) for result in results if isinstance(result, Exception))
-                raise RuntimeError(f"All weather sources failed: {errors}")
-            result = fuse(location, usable)
+                usable = []
+                errors = []
+                for source in self.sources:
+                    try:
+                        usable.append(await source.forecast(location, now))
+                    except Exception as exc:
+                        errors.append(f"{source.name}: {exc}")
+                if not usable:
+                    raise RuntimeError(f"All weather sources failed: {'; '.join(errors)}")
+                result = fuse(location, usable)
             self._cache[key] = (time.monotonic(), result)
             return result
 
     async def get_many(self, locations: tuple[Location, ...], force_refresh: bool = False) -> list[WeatherResult]:
-        """Fetch a location set using batch-capable sources to avoid provider burst limits."""
+        """Fetch a location set with one sequential batch request per model."""
         if not locations:
             return []
 
         cached_results: list[WeatherResult | None] = [None] * len(locations)
         missing: list[tuple[int, Location]] = []
+        now_mono = time.monotonic()
 
         for index, location in enumerate(locations):
             cached = self._cache.get(self._key(location))
-            if not force_refresh and cached and time.monotonic() - cached[0] < self.cache_ttl_seconds:
+            if not force_refresh and cached and now_mono - cached[0] < self.cache_ttl_seconds:
                 cached_results[index] = cached[1]
             else:
                 missing.append((index, location))
@@ -71,23 +73,21 @@ class WeatherService:
         missing_locations = [location for _, location in missing]
         async with self._semaphore:
             now = datetime.now(timezone.utc)
-            source_results = await asyncio.gather(
-                *(source.forecast_many(missing_locations, now) for source in self.sources),
-                return_exceptions=True,
-            )
+            source_batches = []
+            errors = []
+            for source in self.sources:
+                try:
+                    source_batches.append(await source.forecast_many(missing_locations, now))
+                except Exception as exc:
+                    errors.append(f"{source.name}: {exc}")
+
+        if not source_batches:
+            raise RuntimeError(f"All weather sources failed: {'; '.join(errors)}")
 
         for offset, (index, location) in enumerate(missing):
-            forecasts = []
-            errors = []
-            for source_result in source_results:
-                if isinstance(source_result, Exception):
-                    errors.append(str(source_result))
-                elif offset < len(source_result):
-                    forecasts.append(source_result[offset])
-                else:
-                    errors.append("source returned an incomplete batch")
+            forecasts = [batch[offset] for batch in source_batches if offset < len(batch)]
             if not forecasts:
-                raise RuntimeError(f"All weather sources failed: {'; '.join(errors)}")
+                raise RuntimeError(f"No usable weather forecast for {location.id}")
             fused = fuse(location, forecasts)
             self._cache[self._key(location)] = (time.monotonic(), fused)
             cached_results[index] = fused
