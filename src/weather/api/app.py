@@ -6,22 +6,29 @@ from functools import lru_cache
 from fastapi import FastAPI, HTTPException, Query
 
 from weather.geography import DISTRICTS, HILL_STATIONS, LOCATIONS, get_location
-from weather.models import DistrictSummary, Location, ValleyOverview
+from weather.models import Location, ValleyOverview
 from weather.service import WeatherService
 from weather.sources.met_no import MetNoSource
+from weather.sources.open_meteo import OpenMeteoSource
 
 app = FastAPI(
     title="OpenWeather — Kashmir Valley Weather Engine",
-    version="0.3.0",
-    description="Deterministic weather engine for Kashmir Valley locations with a global MET Norway fallback provider.",
+    version="0.4.0",
+    description="Deterministic multi-source weather engine for Kashmir Valley locations with resilient provider fallback.",
 )
 
 
 @lru_cache(maxsize=1)
 def service() -> WeatherService:
-    # MET Norway provides global Locationforecast coverage and avoids the
-    # Open-Meteo IP throttling that was making the production engine return 500s.
-    return WeatherService([MetNoSource()])
+    # Use the complete engine when providers are available. If Open-Meteo is
+    # throttled, WeatherService keeps the successful MET Norway result instead
+    # of turning the whole weather report into a 500.
+    return WeatherService([
+        MetNoSource(),
+        OpenMeteoSource("ecmwf_ifs"),
+        OpenMeteoSource("gfs_seamless"),
+        OpenMeteoSource("icon_seamless"),
+    ])
 
 
 @app.get("/v1/health")
@@ -29,7 +36,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "engine": "openweather",
-        "mode": "deterministic",
+        "mode": "deterministic-multi-source",
         "sources": len(service().sources),
         "cache": service().cache_stats(),
     }
@@ -56,11 +63,7 @@ async def current(
     refresh: bool = Query(False),
 ):
     location = Location(
-        id=f"coord_{lat}_{lon}",
-        name="Coordinate",
-        kind="town",
-        latitude=lat,
-        longitude=lon,
+        id=f"coord_{lat}_{lon}", name="Coordinate", kind="town", latitude=lat, longitude=lon,
         elevation_m=elevation_m if elevation_m is not None else 0,
     )
     return await service().get(location, force_refresh=refresh)
@@ -82,7 +85,7 @@ async def valley_overview():
     district_results = results[:district_count]
     hill_results = results[district_count:]
     districts = [
-        DistrictSummary(district=location.name, representative_location=location.id, weather=result)
+        {"district": location.name, "representative_location": location.id, "weather": result}
         for location, result in zip(DISTRICTS, district_results)
     ]
     return ValleyOverview(
