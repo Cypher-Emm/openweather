@@ -59,10 +59,18 @@ class MetNoSource(WeatherSource):
             data = point.get("data", {})
             instant = data.get("instant", {}).get("details", {})
             next_hour = data.get("next_1_hours", {})
-            next_hour_details = next_hour.get("details", {})
-            precipitation = next_hour_details.get("precipitation_amount")
-            probability = next_hour_details.get("probability_of_precipitation")
-            weather_symbol = next_hour.get("summary", {}).get("symbol_code")
+            next_six = data.get("next_6_hours", {})
+            next_twelve = data.get("next_12_hours", {})
+            period_details = [next_hour.get("details", {}), next_six.get("details", {}), next_twelve.get("details", {})]
+            probabilities = [d.get("probability_of_precipitation") for d in period_details if isinstance(d.get("probability_of_precipitation"), (int, float))]
+            precip_values = [d.get("precipitation_amount") for d in period_details if isinstance(d.get("precipitation_amount"), (int, float))]
+            probability = max(probabilities) if probabilities else None
+            precipitation = precip_values[0] if precip_values else None
+            weather_symbol = (
+                next_hour.get("summary", {}).get("symbol_code")
+                or next_six.get("summary", {}).get("symbol_code")
+                or next_twelve.get("summary", {}).get("symbol_code")
+            )
 
             hourly.append(
                 HourlyPoint(
@@ -91,22 +99,35 @@ class MetNoSource(WeatherSource):
             })
 
         first = series[0]
-        instant = first.get("data", {}).get("instant", {}).get("details", {})
-        symbol = first.get("data", {}).get("next_1_hours", {}).get("summary", {}).get("symbol_code")
+        first_data = first.get("data", {})
+        first_instant = first_data.get("instant", {}).get("details", {})
+        first_periods = [
+            first_data.get("next_1_hours", {}),
+            first_data.get("next_6_hours", {}),
+            first_data.get("next_12_hours", {}),
+        ]
+        first_probabilities = [
+            period.get("details", {}).get("probability_of_precipitation")
+            for period in first_periods
+            if isinstance(period.get("details", {}).get("probability_of_precipitation"), (int, float))
+        ]
+        first_period = next((period for period in first_periods if period.get("details")), {})
+        first_details = first_period.get("details", {})
+        symbol = next((period.get("summary", {}).get("symbol_code") for period in first_periods if period.get("summary", {}).get("symbol_code")), None)
         current = CurrentWeather(
-            temperature_c=instant.get("air_temperature"),
+            temperature_c=first_instant.get("air_temperature"),
             apparent_temperature_c=None,
-            dew_point_c=instant.get("dew_point_temperature"),
-            relative_humidity_pct=instant.get("relative_humidity"),
-            pressure_hpa=instant.get("air_pressure_at_sea_level"),
-            precipitation_mm=first.get("data", {}).get("next_1_hours", {}).get("details", {}).get("precipitation_amount"),
-            rain_mm=first.get("data", {}).get("next_1_hours", {}).get("details", {}).get("precipitation_amount"),
+            dew_point_c=first_instant.get("dew_point_temperature"),
+            relative_humidity_pct=first_instant.get("relative_humidity"),
+            pressure_hpa=first_instant.get("air_pressure_at_sea_level"),
+            precipitation_mm=first_details.get("precipitation_amount"),
+            rain_mm=first_details.get("precipitation_amount"),
             snowfall_cm=None,
-            cloud_cover_pct=instant.get("cloud_area_fraction"),
+            cloud_cover_pct=first_instant.get("cloud_area_fraction"),
             visibility_m=None,
-            wind_speed_kmh=_mps_to_kmh(instant.get("wind_speed")),
-            wind_gust_kmh=_mps_to_kmh(instant.get("wind_speed_of_gust")),
-            wind_direction_deg=instant.get("wind_from_direction"),
+            wind_speed_kmh=_mps_to_kmh(first_instant.get("wind_speed")),
+            wind_gust_kmh=_mps_to_kmh(first_instant.get("wind_speed_of_gust")),
+            wind_direction_deg=first_instant.get("wind_from_direction"),
             weather_code=_symbol_to_code(symbol),
         )
 
