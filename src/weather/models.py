@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class Location(BaseModel):
     model_config = ConfigDict(frozen=True)
-
     id: str
     name: str
     district: str | None = None
@@ -55,11 +54,11 @@ class DailyPoint(BaseModel):
     date: str
     temperature_max_c: float | None = None
     temperature_min_c: float | None = None
-    precipitation_probability_max_pct: float | None = None
-    precipitation_sum_mm: float | None = None
-    rain_sum_mm: float | None = None
-    snowfall_sum_cm: float | None = None
-    wind_gust_max_kmh: float | None = None
+    precipitation_probability_max_pct: float | None = Field(default=None, ge=0, le=100)
+    precipitation_sum_mm: float | None = Field(default=None, ge=0)
+    rain_sum_mm: float | None = Field(default=None, ge=0)
+    snowfall_sum_cm: float | None = Field(default=None, ge=0)
+    wind_gust_max_kmh: float | None = Field(default=None, ge=0)
 
 
 class SourceMeta(BaseModel):
