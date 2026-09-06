@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: kashmir-openweather
+    runtime: docker
+    repo: https://github.com/Cypher-Emm/openweather
+    branch: main
+    region: singapore
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /v1/health
