@@ -18,10 +18,16 @@ class OpenMeteoSource(WeatherSource):
         self._client = client
 
     async def forecast(self, location: Location, now: datetime) -> SourceForecast:
+        return (await self.forecast_many([location], now))[0]
+
+    async def forecast_many(self, locations: list[Location], now: datetime) -> list[SourceForecast]:
+        if not locations:
+            return []
+
         params = {
-            "latitude": location.latitude,
-            "longitude": location.longitude,
-            "elevation": location.elevation_m,
+            "latitude": ",".join(str(location.latitude) for location in locations),
+            "longitude": ",".join(str(location.longitude) for location in locations),
+            "elevation": ",".join(str(location.elevation_m) for location in locations),
             "timezone": "auto",
             "forecast_days": 7,
             "models": self.model,
@@ -45,7 +51,7 @@ class OpenMeteoSource(WeatherSource):
         client = self._client
         owns_client = client is None
         if owns_client:
-            client = httpx.AsyncClient(timeout=20)
+            client = httpx.AsyncClient(timeout=30)
         try:
             response: httpx.Response | None = None
             for attempt in range(3):
@@ -54,18 +60,26 @@ class OpenMeteoSource(WeatherSource):
                     break
                 retry_after = response.headers.get("Retry-After")
                 try:
-                    delay = min(float(retry_after), 8.0) if retry_after else 2.0 * (attempt + 1)
+                    delay = min(float(retry_after), 10.0) if retry_after else 2.0 * (attempt + 1)
                 except ValueError:
                     delay = 2.0 * (attempt + 1)
                 await asyncio.sleep(delay)
             assert response is not None
             response.raise_for_status()
+            payload = response.json()
         finally:
             if owns_client:
                 await client.aclose()
-        payload = response.json()
-        latency_ms = round((time.perf_counter() - started) * 1000)
 
+        payloads = [payload] if isinstance(payload, dict) else payload
+        if len(payloads) != len(locations):
+            raise RuntimeError(f"Open-Meteo returned {len(payloads)} locations for {len(locations)} requested")
+
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        return [self._parse_payload(item, latency_ms, self.model) for item in payloads]
+
+    @staticmethod
+    def _parse_payload(payload: dict, latency_ms: int, model: str) -> SourceForecast:
         current_raw = payload.get("current") or {}
         current = CurrentWeather(
             temperature_c=current_raw.get("temperature_2m"),
@@ -86,8 +100,10 @@ class OpenMeteoSource(WeatherSource):
 
         hourly_raw = payload.get("hourly") or {}
         hourly_times = hourly_raw.get("time", [])
+
         def h(name: str) -> list:
             return hourly_raw.get(name, [None] * len(hourly_times))
+
         hourly = [
             HourlyPoint(
                 time=datetime.fromisoformat(t), temperature_c=h("temperature_2m")[i],
@@ -103,8 +119,10 @@ class OpenMeteoSource(WeatherSource):
 
         daily_raw = payload.get("daily") or {}
         daily_times = daily_raw.get("time", [])
+
         def d(name: str) -> list:
             return daily_raw.get(name, [None] * len(daily_times))
+
         daily = [
             DailyPoint(
                 date=t, temperature_max_c=d("temperature_2m_max")[i],
@@ -116,7 +134,7 @@ class OpenMeteoSource(WeatherSource):
         ]
 
         meta = SourceMeta(
-            provider=self.name, model=self.model,
-            retrieved_at=datetime.now(timezone.utc), latency_ms=latency_ms,
+            provider="open-meteo", model=model, retrieved_at=datetime.now(timezone.utc),
+            latency_ms=latency_ms,
         )
         return SourceForecast(current=current, hourly=hourly, daily=daily, meta=meta)
