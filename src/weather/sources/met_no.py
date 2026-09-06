@@ -60,6 +60,7 @@ class MetNoSource(WeatherSource):
                 snowfall_cm=None, cloud_cover_pct=instant.get("cloud_area_fraction"), visibility_m=None,
                 wind_speed_kmh=_mps_to_kmh(instant.get("wind_speed")), wind_gust_kmh=_mps_to_kmh(instant.get("wind_speed_of_gust")),
                 wind_direction_deg=instant.get("wind_from_direction"), pressure_hpa=instant.get("air_pressure_at_sea_level"),
+                weather_code=_symbol_to_code(symbol),
             ))
             local_date = timestamp.astimezone(timezone.utc).date().isoformat()
             daily_values[local_date].append({"temp": instant.get("air_temperature"), "precip": precipitation, "probability": probability, "gust": _mps_to_kmh(instant.get("wind_speed_of_gust"))})
