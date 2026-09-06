@@ -10,8 +10,8 @@ from weather.sources.base import SourceForecast
 
 SCALAR_CURRENT = (
     "temperature_c", "apparent_temperature_c", "dew_point_c", "relative_humidity_pct",
-    "pressure_hpa", "precipitation_mm", "rain_mm", "snowfall_cm", "cloud_cover_pct",
-    "visibility_m", "wind_speed_kmh", "wind_gust_kmh",
+    "pressure_hpa", "precipitation_probability_pct", "precipitation_mm", "rain_mm", "snowfall_cm",
+    "cloud_cover_pct", "visibility_m", "wind_speed_kmh", "wind_gust_kmh",
 )
 SCALAR_HOURLY = (
     "temperature_c", "apparent_temperature_c", "precipitation_probability_pct",
@@ -44,10 +44,8 @@ def _spread(values: list[float]) -> float:
 
 
 def _agreement(items: list[SourceForecast]) -> float:
-    """Conservative cross-model agreement score across several physical variables."""
     scores: list[float] = []
-    for field, scale in (("temperature_c", 6.0), ("relative_humidity_pct", 35.0),
-                         ("wind_speed_kmh", 20.0), ("pressure_hpa", 8.0)):
+    for field, scale in (("temperature_c", 6.0), ("relative_humidity_pct", 35.0), ("wind_speed_kmh", 20.0), ("pressure_hpa", 8.0)):
         values = [getattr(x.current, field) for x in items if x.current and getattr(x.current, field) is not None]
         if len(values) >= 2:
             scores.append(max(0.0, min(1.0, 1.0 - _spread(values) / scale)))
@@ -58,11 +56,8 @@ def _fuse_current(items: list[SourceForecast]) -> CurrentWeather | None:
     currents = [x.current for x in items if x.current is not None]
     if not currents:
         return None
-    data = {field: _median([getattr(c, field) for c in currents if getattr(c, field) is not None])
-            for field in SCALAR_CURRENT}
-    data["wind_direction_deg"] = _circular_mean(
-        [c.wind_direction_deg for c in currents if c.wind_direction_deg is not None]
-    )
+    data = {field: _median([getattr(c, field) for c in currents if getattr(c, field) is not None]) for field in SCALAR_CURRENT}
+    data["wind_direction_deg"] = _circular_mean([c.wind_direction_deg for c in currents if c.wind_direction_deg is not None])
     codes = [c.weather_code for c in currents if c.weather_code is not None]
     data["weather_code"] = max(set(codes), key=codes.count) if codes else None
     return CurrentWeather(**data)
@@ -75,12 +70,9 @@ def _fuse_hourly(items: list[SourceForecast]) -> list[HourlyPoint]:
             buckets.setdefault(point.time, []).append(point)
     result: list[HourlyPoint] = []
     for timestamp, points in sorted(buckets.items()):
-        data = {field: _median([getattr(p, field) for p in points if getattr(p, field) is not None])
-                for field in SCALAR_HOURLY}
+        data = {field: _median([getattr(p, field) for p in points if getattr(p, field) is not None]) for field in SCALAR_HOURLY}
         data["time"] = timestamp
-        data["wind_direction_deg"] = _circular_mean(
-            [p.wind_direction_deg for p in points if p.wind_direction_deg is not None]
-        )
+        data["wind_direction_deg"] = _circular_mean([p.wind_direction_deg for p in points if p.wind_direction_deg is not None])
         result.append(HourlyPoint(**data))
     return result
 
@@ -92,8 +84,7 @@ def _fuse_daily(items: list[SourceForecast]) -> list[DailyPoint]:
             buckets.setdefault(point.date, []).append(point)
     result: list[DailyPoint] = []
     for date, points in sorted(buckets.items()):
-        data = {field: _median([getattr(p, field) for p in points if getattr(p, field) is not None])
-                for field in SCALAR_DAILY}
+        data = {field: _median([getattr(p, field) for p in points if getattr(p, field) is not None]) for field in SCALAR_DAILY}
         data["date"] = date
         result.append(DailyPoint(**data))
     return result
@@ -122,6 +113,5 @@ def fuse(location: Location, sources: list[SourceForecast]) -> WeatherResult:
         hourly=_fuse_hourly(valid),
         daily=_fuse_daily(valid),
         sources=[x.meta for x in valid],
-        quality=Quality(score=score, source_count=len(valid), model_agreement=agreement,
-                        freshness_score=freshness, notes=notes),
+        quality=Quality(score=score, source_count=len(valid), model_agreement=agreement, freshness_score=freshness, notes=notes),
     )
