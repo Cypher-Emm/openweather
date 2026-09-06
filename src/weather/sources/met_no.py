@@ -120,6 +120,7 @@ class MetNoSource(WeatherSource):
             dew_point_c=first_instant.get("dew_point_temperature"),
             relative_humidity_pct=first_instant.get("relative_humidity"),
             pressure_hpa=first_instant.get("air_pressure_at_sea_level"),
+            precipitation_probability_pct=max(first_probabilities) if first_probabilities else None,
             precipitation_mm=first_details.get("precipitation_amount"),
             rain_mm=first_details.get("precipitation_amount"),
             snowfall_cm=None,
