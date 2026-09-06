@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
 
-from weather.geography import DISTRICTS, HILL_STATIONS, LOCATIONS
+from weather.geography import DISTRICTS, HILL_STATIONS, LOCATIONS, get_location
 from weather.models import DistrictSummary, Location, ValleyOverview
 from weather.service import WeatherService
 from weather.sources.met_no import MetNoSource
