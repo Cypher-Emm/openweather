@@ -24,6 +24,11 @@ SCALAR_DAILY = (
 )
 
 
+WET_WEATHER_CODES = {
+    51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99
+}
+
+
 def _median(values: list[float]) -> float | None:
     return float(median(values)) if values else None
 
@@ -53,19 +58,25 @@ def _agreement(items: list[SourceForecast]) -> float:
 
 
 def _occurrence_probability(points: list[HourlyPoint]) -> float | None:
-    """Fallback precipitation chance when a provider omits native probability data.
+    """Estimate precipitation chance when a provider omits native probability data.
 
-    This is intentionally an engine-derived occurrence estimate, not a fabricated
-    0%. It measures the share of available forecast hours with measurable
-    precipitation (>0.1 mm).
+    Prefer measurable precipitation, then fall back to WMO-like weather codes.
+    The result is an occurrence estimate over the available forecast hours, not a
+    fabricated 0% value.
     """
     if not points:
         return None
+
     measurable = [p for p in points if isinstance(p.precipitation_mm, (int, float))]
-    if not measurable:
+    if measurable:
+        wet = sum(1 for p in measurable if p.precipitation_mm > 0.1)
+        return round((wet / len(measurable)) * 100, 1)
+
+    coded = [p.weather_code for p in points if isinstance(p.weather_code, int)]
+    if not coded:
         return None
-    wet = sum(1 for p in measurable if p.precipitation_mm > 0.1)
-    return round((wet / len(measurable)) * 100, 1)
+    wet = sum(1 for code in coded if code in WET_WEATHER_CODES)
+    return round((wet / len(coded)) * 100, 1)
 
 
 def _source_current_probability(source: SourceForecast) -> float | None:
