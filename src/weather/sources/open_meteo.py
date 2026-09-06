@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 
@@ -41,12 +42,27 @@ class OpenMeteoSource(WeatherSource):
             ]),
         }
         started = time.perf_counter()
-        if self._client is None:
-            async with httpx.AsyncClient(timeout=20) as client:
+        client = self._client
+        owns_client = client is None
+        if owns_client:
+            client = httpx.AsyncClient(timeout=20)
+        try:
+            response: httpx.Response | None = None
+            for attempt in range(3):
                 response = await client.get("https://api.open-meteo.com/v1/forecast", params=params)
-        else:
-            response = await self._client.get("https://api.open-meteo.com/v1/forecast", params=params)
-        response.raise_for_status()
+                if response.status_code != 429:
+                    break
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    delay = min(float(retry_after), 8.0) if retry_after else 2.0 * (attempt + 1)
+                except ValueError:
+                    delay = 2.0 * (attempt + 1)
+                await asyncio.sleep(delay)
+            assert response is not None
+            response.raise_for_status()
+        finally:
+            if owns_client:
+                await client.aclose()
         payload = response.json()
         latency_ms = round((time.perf_counter() - started) * 1000)
 
