@@ -13,9 +13,11 @@ from weather.sources.base import WeatherSource
 class WeatherService:
     """Provider orchestration with bounded concurrency and a short in-memory cache."""
 
-    def __init__(self, sources: list[WeatherSource], cache_ttl_seconds: int = 300, max_concurrency: int = 12) -> None:
+    def __init__(self, sources: list[WeatherSource], cache_ttl_seconds: int = 300, max_concurrency: int = 2) -> None:
         self.sources = sources
         self.cache_ttl_seconds = cache_ttl_seconds
+        # Keep provider traffic deliberately low. Open-Meteo rate-limits bursts,
+        # and one location fans out to multiple model requests.
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._cache: dict[str, tuple[float, WeatherResult]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
