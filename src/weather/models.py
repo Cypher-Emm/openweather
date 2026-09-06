@@ -23,6 +23,7 @@ class CurrentWeather(BaseModel):
     dew_point_c: float | None = None
     relative_humidity_pct: float | None = Field(default=None, ge=0, le=100)
     pressure_hpa: float | None = None
+    precipitation_probability_pct: float | None = Field(default=None, ge=0, le=100)
     precipitation_mm: float | None = Field(default=None, ge=0)
     rain_mm: float | None = Field(default=None, ge=0)
     snowfall_cm: float | None = Field(default=None, ge=0)
