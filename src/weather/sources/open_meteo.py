@@ -12,7 +12,8 @@ from weather.sources.base import SourceForecast, WeatherSource
 class OpenMeteoSource(WeatherSource):
     name = "open-meteo"
 
-    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(self, model: str = "best_match", client: httpx.AsyncClient | None = None) -> None:
+        self.model = model
         self._client = client
 
     async def forecast(self, location: Location, now: datetime) -> SourceForecast:
@@ -22,6 +23,7 @@ class OpenMeteoSource(WeatherSource):
             "elevation": location.elevation_m,
             "timezone": "auto",
             "forecast_days": 7,
+            "models": self.model,
             "current": ",".join([
                 "temperature_2m", "apparent_temperature", "relative_humidity_2m",
                 "dew_point_2m", "surface_pressure", "precipitation", "rain", "snowfall",
@@ -68,46 +70,37 @@ class OpenMeteoSource(WeatherSource):
 
         hourly_raw = payload.get("hourly") or {}
         hourly_times = hourly_raw.get("time", [])
+        def h(name: str) -> list:
+            return hourly_raw.get(name, [None] * len(hourly_times))
         hourly = [
             HourlyPoint(
-                time=datetime.fromisoformat(t),
-                temperature_c=hourly_raw.get("temperature_2m", [None] * len(hourly_times))[i],
-                apparent_temperature_c=hourly_raw.get("apparent_temperature", [None] * len(hourly_times))[i],
-                precipitation_probability_pct=hourly_raw.get("precipitation_probability", [None] * len(hourly_times))[i],
-                precipitation_mm=hourly_raw.get("precipitation", [None] * len(hourly_times))[i],
-                rain_mm=hourly_raw.get("rain", [None] * len(hourly_times))[i],
-                snowfall_cm=hourly_raw.get("snowfall", [None] * len(hourly_times))[i],
-                cloud_cover_pct=hourly_raw.get("cloud_cover", [None] * len(hourly_times))[i],
-                visibility_m=hourly_raw.get("visibility", [None] * len(hourly_times))[i],
-                wind_speed_kmh=hourly_raw.get("wind_speed_10m", [None] * len(hourly_times))[i],
-                wind_gust_kmh=hourly_raw.get("wind_gusts_10m", [None] * len(hourly_times))[i],
-                wind_direction_deg=hourly_raw.get("wind_direction_10m", [None] * len(hourly_times))[i],
-                pressure_hpa=hourly_raw.get("surface_pressure", [None] * len(hourly_times))[i],
-            )
-            for i, t in enumerate(hourly_times)
+                time=datetime.fromisoformat(t), temperature_c=h("temperature_2m")[i],
+                apparent_temperature_c=h("apparent_temperature")[i],
+                precipitation_probability_pct=h("precipitation_probability")[i],
+                precipitation_mm=h("precipitation")[i], rain_mm=h("rain")[i],
+                snowfall_cm=h("snowfall")[i], cloud_cover_pct=h("cloud_cover")[i],
+                visibility_m=h("visibility")[i], wind_speed_kmh=h("wind_speed_10m")[i],
+                wind_gust_kmh=h("wind_gusts_10m")[i], wind_direction_deg=h("wind_direction_10m")[i],
+                pressure_hpa=h("surface_pressure")[i],
+            ) for i, t in enumerate(hourly_times)
         ]
 
         daily_raw = payload.get("daily") or {}
         daily_times = daily_raw.get("time", [])
+        def d(name: str) -> list:
+            return daily_raw.get(name, [None] * len(daily_times))
         daily = [
             DailyPoint(
-                date=t,
-                temperature_max_c=daily_raw.get("temperature_2m_max", [None] * len(daily_times))[i],
-                temperature_min_c=daily_raw.get("temperature_2m_min", [None] * len(daily_times))[i],
-                precipitation_probability_max_pct=daily_raw.get("precipitation_probability_max", [None] * len(daily_times))[i],
-                precipitation_sum_mm=daily_raw.get("precipitation_sum", [None] * len(daily_times))[i],
-                rain_sum_mm=daily_raw.get("rain_sum", [None] * len(daily_times))[i],
-                snowfall_sum_cm=daily_raw.get("snowfall_sum", [None] * len(daily_times))[i],
-                wind_gust_max_kmh=daily_raw.get("wind_gusts_10m_max", [None] * len(daily_times))[i],
-            )
-            for i, t in enumerate(daily_times)
+                date=t, temperature_max_c=d("temperature_2m_max")[i],
+                temperature_min_c=d("temperature_2m_min")[i],
+                precipitation_probability_max_pct=d("precipitation_probability_max")[i],
+                precipitation_sum_mm=d("precipitation_sum")[i], rain_sum_mm=d("rain_sum")[i],
+                snowfall_sum_cm=d("snowfall_sum")[i], wind_gust_max_kmh=d("wind_gusts_10m_max")[i],
+            ) for i, t in enumerate(daily_times)
         ]
 
         meta = SourceMeta(
-            provider=self.name,
-            model=payload.get("generationtime_ms", "best-match").__str__(),
-            retrieved_at=datetime.now(timezone.utc),
-            forecast_run=None,
-            latency_ms=latency_ms,
+            provider=self.name, model=self.model,
+            retrieved_at=datetime.now(timezone.utc), latency_ms=latency_ms,
         )
         return SourceForecast(current=current, hourly=hourly, daily=daily, meta=meta)
