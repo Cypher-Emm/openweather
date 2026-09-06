@@ -52,11 +52,36 @@ def _agreement(items: list[SourceForecast]) -> float:
     return sum(scores) / len(scores) if scores else (0.5 if items else 0.0)
 
 
+def _occurrence_probability(points: list[HourlyPoint]) -> float | None:
+    """Fallback precipitation chance when a provider omits native probability data.
+
+    This is intentionally an engine-derived occurrence estimate, not a fabricated
+    0%. It measures the share of available forecast hours with measurable
+    precipitation (>0.1 mm).
+    """
+    if not points:
+        return None
+    measurable = [p for p in points if isinstance(p.precipitation_mm, (int, float))]
+    if not measurable:
+        return None
+    wet = sum(1 for p in measurable if p.precipitation_mm > 0.1)
+    return round((wet / len(measurable)) * 100, 1)
+
+
+def _source_current_probability(source: SourceForecast) -> float | None:
+    native = source.current.precipitation_probability_pct if source.current else None
+    if isinstance(native, (int, float)):
+        return float(native)
+    return _occurrence_probability(source.hourly[:24])
+
+
 def _fuse_current(items: list[SourceForecast]) -> CurrentWeather | None:
     currents = [x.current for x in items if x.current is not None]
     if not currents:
         return None
     data = {field: _median([getattr(c, field) for c in currents if getattr(c, field) is not None]) for field in SCALAR_CURRENT}
+    probabilities = [p for p in (_source_current_probability(source) for source in items) if p is not None]
+    data["precipitation_probability_pct"] = _median(probabilities)
     data["wind_direction_deg"] = _circular_mean([c.wind_direction_deg for c in currents if c.wind_direction_deg is not None])
     codes = [c.weather_code for c in currents if c.weather_code is not None]
     data["weather_code"] = max(set(codes), key=codes.count) if codes else None
@@ -86,6 +111,14 @@ def _fuse_daily(items: list[SourceForecast]) -> list[DailyPoint]:
     for date, points in sorted(buckets.items()):
         data = {field: _median([getattr(p, field) for p in points if getattr(p, field) is not None]) for field in SCALAR_DAILY}
         data["date"] = date
+        if data["precipitation_probability_max_pct"] is None:
+            fallback_probabilities: list[float] = []
+            for source in items:
+                day_points = [p for p in source.hourly if p.time.date().isoformat() == date]
+                probability = _occurrence_probability(day_points)
+                if probability is not None:
+                    fallback_probabilities.append(probability)
+            data["precipitation_probability_max_pct"] = _median(fallback_probabilities)
         result.append(DailyPoint(**data))
     return result
 
