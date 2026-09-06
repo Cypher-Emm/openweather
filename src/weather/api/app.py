@@ -60,7 +60,7 @@ async def forecast(location: str, refresh: bool = Query(False)):
 
 
 async def _many(locations: tuple[Location, ...]):
-    return await asyncio.gather(*(service().get(x) for x in locations))
+    return await service().get_many(locations)
 
 
 @app.get("/v1/valley/overview", response_model=ValleyOverview)
