@@ -13,7 +13,7 @@ from weather.sources.open_meteo import OpenMeteoSource
 
 app = FastAPI(
     title="OpenWeather — Kashmir Valley Weather Engine",
-    version="0.4.0",
+    version="0.4.1",
     description="Deterministic multi-source weather engine for Kashmir Valley locations with resilient provider fallback.",
 )
 
@@ -36,6 +36,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "engine": "openweather",
+        "version": app.version,
         "mode": "deterministic-multi-source",
         "sources": len(service().sources),
         "cache": service().cache_stats(),
