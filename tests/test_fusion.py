@@ -5,11 +5,11 @@ from weather.models import CurrentWeather, HourlyPoint, Location, SourceMeta
 from weather.sources.base import SourceForecast
 
 
-def source(temp: float, retrieved_at: datetime, wind: float | None = None, direction: float | None = None, weather_code: int | None = None) -> SourceForecast:
+def source(temp: float, retrieved_at: datetime, wind: float | None = None, direction: float | None = None, weather_code: int | None = None, hourly_time: datetime | None = None) -> SourceForecast:
     return SourceForecast(
         current=CurrentWeather(temperature_c=temp, relative_humidity_pct=50,
                                wind_speed_kmh=wind, wind_direction_deg=direction, weather_code=weather_code),
-        hourly=[HourlyPoint(time=datetime(2026, 9, 6, 12), temperature_c=temp,
+        hourly=[HourlyPoint(time=hourly_time or datetime(2026, 9, 6, 12), temperature_c=temp,
                             wind_direction_deg=direction, weather_code=weather_code)],
         daily=[],
         meta=SourceMeta(provider="test", model="test", retrieved_at=retrieved_at),
@@ -51,3 +51,14 @@ def test_stale_sources_reduce_quality():
     result = fuse(location(), [source(20, old), source(20, now)])
     assert result.quality.freshness_score < 0.01
     assert result.quality.score < 0.7
+
+
+def test_fusion_normalizes_mixed_naive_and_aware_hourly_times():
+    now = datetime.now(timezone.utc)
+    naive = datetime(2026, 9, 6, 12)
+    aware = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    result = fuse(location(), [source(20, now, hourly_time=naive), source(22, now, hourly_time=aware)])
+    assert len(result.hourly) == 1
+    assert result.hourly[0].time.tzinfo is not None
+    assert result.hourly[0].time.utcoffset() == timezone.utc.utcoffset(result.hourly[0].time)
+    assert result.hourly[0].temperature_c == 21
