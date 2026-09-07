@@ -23,7 +23,6 @@ SCALAR_DAILY = (
     "precipitation_sum_mm", "rain_sum_mm", "snowfall_sum_cm", "wind_gust_max_kmh",
 )
 
-
 WET_WEATHER_CODES = {
     51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99
 }
@@ -65,20 +64,13 @@ def _agreement(items: list[SourceForecast]) -> float:
 
 
 def _occurrence_probability(points: list[HourlyPoint]) -> float | None:
-    """Estimate precipitation chance when a provider omits native probability data.
-
-    Prefer measurable precipitation, then fall back to WMO-like weather codes.
-    The result is an occurrence estimate over the available forecast hours, not a
-    fabricated 0% value.
-    """
+    """Estimate precipitation chance when a provider omits native probability data."""
     if not points:
         return None
-
     measurable = [p for p in points if isinstance(p.precipitation_mm, (int, float))]
     if measurable:
         wet = sum(1 for p in measurable if p.precipitation_mm > 0.1)
         return round((wet / len(measurable)) * 100, 1)
-
     coded = [p.weather_code for p in points if isinstance(p.weather_code, int)]
     if not coded:
         return None
@@ -87,9 +79,19 @@ def _occurrence_probability(points: list[HourlyPoint]) -> float | None:
 
 
 def _source_current_probability(source: SourceForecast) -> float | None:
+    """Return today's useful precipitation chance, not only the current hour's value."""
+    candidates: list[float] = []
     native = source.current.precipitation_probability_pct if source.current else None
     if isinstance(native, (int, float)):
-        return float(native)
+        candidates.append(float(native))
+    hourly_native = [
+        float(point.precipitation_probability_pct)
+        for point in source.hourly[:24]
+        if isinstance(point.precipitation_probability_pct, (int, float))
+    ]
+    candidates.extend(hourly_native)
+    if candidates:
+        return max(candidates)
     return _occurrence_probability(source.hourly[:24])
 
 
