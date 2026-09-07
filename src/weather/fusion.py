@@ -33,6 +33,13 @@ def _median(values: list[float]) -> float | None:
     return float(median(values)) if values else None
 
 
+def _utc_datetime(value: datetime) -> datetime:
+    """Normalize provider timestamps so naive and aware datetimes can be safely fused."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _circular_mean(degrees: list[float]) -> float | None:
     if not degrees:
         return None
@@ -103,12 +110,15 @@ def _fuse_hourly(items: list[SourceForecast]) -> list[HourlyPoint]:
     buckets: dict[datetime, list[HourlyPoint]] = {}
     for source in items:
         for point in source.hourly:
-            buckets.setdefault(point.time, []).append(point)
+            timestamp = _utc_datetime(point.time)
+            buckets.setdefault(timestamp, []).append(point)
     result: list[HourlyPoint] = []
     for timestamp, points in sorted(buckets.items()):
         data = {field: _median([getattr(p, field) for p in points if getattr(p, field) is not None]) for field in SCALAR_HOURLY}
         data["time"] = timestamp
         data["wind_direction_deg"] = _circular_mean([p.wind_direction_deg for p in points if p.wind_direction_deg is not None])
+        codes = [p.weather_code for p in points if p.weather_code is not None]
+        data["weather_code"] = max(set(codes), key=codes.count) if codes else None
         result.append(HourlyPoint(**data))
     return result
 
@@ -125,7 +135,7 @@ def _fuse_daily(items: list[SourceForecast]) -> list[DailyPoint]:
         if data["precipitation_probability_max_pct"] is None:
             fallback_probabilities: list[float] = []
             for source in items:
-                day_points = [p for p in source.hourly if p.time.date().isoformat() == date]
+                day_points = [p for p in source.hourly if _utc_datetime(p.time).date().isoformat() == date]
                 probability = _occurrence_probability(day_points)
                 if probability is not None:
                     fallback_probabilities.append(probability)
@@ -140,7 +150,7 @@ def fuse(location: Location, sources: list[SourceForecast]) -> WeatherResult:
     agreement = _agreement(valid)
     freshness = 0.0
     if valid:
-        ages = [max(0.0, (now - x.meta.retrieved_at).total_seconds()) for x in valid]
+        ages = [max(0.0, (now - _utc_datetime(x.meta.retrieved_at)).total_seconds()) for x in valid]
         freshness = max(0.0, min(1.0, 1.0 - max(ages) / 3600.0))
     score = 0.65 * agreement + 0.35 * freshness
     notes: list[str] = []
